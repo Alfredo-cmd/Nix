@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.env
+data/
+audio/
+*.wav
+*.mp3
+.hf-cache/
+.qwen-venv/
+__pycache__/
+*.pyc
+
+# Ambientes e caches locais
+.hf-cache/
+.qwen-venv/
+__pycache__/
+*.pyc
+
+# Arquivos locais grandes
+.hf-cache/
+.qwen-venv/
+__pycache__/
+*.pyc
