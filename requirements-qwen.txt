@@ -1,0 +1,4 @@
+# Dependências do TTS local da Nix.
+# Use dentro de .qwen-venv.
+qwen-tts
+soundfile

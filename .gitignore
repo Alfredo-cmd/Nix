@@ -1,23 +1,27 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Secrets
 .env
-data/
-audio/
+.env.*
+!.env.example
+
+# Local environments and model caches
+.qwen-venv/
+.hf-cache/
+.venv/
+venv/
+
+# Generated audio / recordings
 *.wav
 *.mp3
-.hf-cache/
-.qwen-venv/
-__pycache__/
-*.pyc
+*.ogg
+*.flac
 
-# Ambientes e caches locais
-.hf-cache/
-.qwen-venv/
-__pycache__/
-*.pyc
+# Keep the source voice sample only on the local machine.
+# It is intentionally not committed to the public repository.
 
-# Arquivos locais grandes
-.hf-cache/
-.qwen-venv/
-__pycache__/
-*.pyc
+# Local data / logs
+data/
+*.log
