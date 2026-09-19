@@ -16,6 +16,12 @@ class ToolManager:
         self.permissions = PermissionManager()
         self.confirmation_callback = confirmation_callback
 
+        # Callback opcional de eventos de progresso (ex.: TOOL_STARTED,
+        # TOOL_FINISHED). É definido pelo LLMGateway durante uma chamada
+        # de chat() e emitido apenas quando uma ferramenta REALMENTE é
+        # executada — nunca de forma especulativa ou inventada.
+        self.event_callback = None
+
         self.tools = {
             "get_system_info": get_system_info,
             "list_directory": list_directory,
@@ -23,6 +29,19 @@ class ToolManager:
             "read_file": read_file,
             "write_file": write_file,
         }
+
+    def _emit(self, event_type, **data):
+        """Emite um evento de progresso real, se houver um callback."""
+
+        if self.event_callback is None:
+            return
+
+        try:
+            self.event_callback({"type": event_type, **data})
+        except Exception as error:
+            # Um erro no consumidor de eventos (ex.: TTS) nunca deve
+            # interromper a execução real da ferramenta.
+            print(f"[EVENTOS] Callback de progresso falhou: {error}")
 
     def execute(self, name, arguments):
         """Executa uma ferramenta respeitando as permissões."""
@@ -61,9 +80,16 @@ class ToolManager:
                     )
                 }
 
+        # A partir daqui a ferramenta VAI rodar de verdade, então o evento
+        # de início é genuíno (não é um progresso inventado).
+        self._emit("TOOL_STARTED", tool=name, arguments=arguments)
+
         try:
-            return self.tools[name](**arguments)
+            result = self.tools[name](**arguments)
+            self._emit("TOOL_FINISHED", tool=name, sucesso=True)
+            return result
         except Exception as error:
+            self._emit("TOOL_FINISHED", tool=name, sucesso=False)
             return {
                 "erro": (
                     f"Erro ao executar {name}: {error}"

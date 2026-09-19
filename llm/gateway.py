@@ -7,7 +7,7 @@ import requests
 from google import genai
 from google.genai import types
 
-from config.personality import SYSTEM_PROMPT
+from config.personality import SYSTEM_PROMPT, VOICE_MODE_ADDENDUM
 from core.provider_manager import ProviderManager
 
 
@@ -22,72 +22,192 @@ class LLMGateway:
 
         self.gemini_client = None
 
+        # Definido a cada chamada de chat(); controla se o prompt de
+        # sistema pede respostas mais curtas (modo voz) ou não.
+        self.voice_mode = False
+
         if os.getenv("GEMINI_API_KEY"):
             self.gemini_client = genai.Client()
 
-    def chat(self, message):
+    def _system_message(self):
+        """Monta a mensagem de sistema, com o adendo de voz se aplicável."""
+
+        content = SYSTEM_PROMPT
+
+        if self.voice_mode:
+            content = content + "\n" + VOICE_MODE_ADDENDUM
+
+        return {
+            "role": "system",
+            "content": content,
+        }
+
+    def chat(self, message, on_event=None, voice_mode=False):
+        """Processa uma mensagem do usuário.
+
+        on_event: callback opcional para eventos de progresso reais
+        (TASK_STARTED, TOOL_STARTED, TOOL_FINISHED, TASK_FINISHED).
+        Nenhum evento é emitido a não ser que algo esteja de fato
+        acontecendo.
+        voice_mode: quando True, usa um prompt de sistema mais enxuto,
+        pensado para respostas que serão faladas.
+        """
+
+        self.voice_mode = voice_mode
+        self.tool_manager.event_callback = on_event
+
         self.messages.append({
             "role": "user",
             "content": message,
         })
 
-        providers = (
-            self.provider_manager
-            .get_available_providers()
-        )
+        if on_event:
+            on_event({"type": "TASK_STARTED"})
 
-        if not providers:
-            return (
-                "Não há nenhum provedor de IA "
-                "disponível no momento."
+        try:
+            providers = (
+                self.provider_manager
+                .get_available_providers()
             )
 
-        for provider in providers:
-
-            try:
-                if provider == "openrouter":
-                    answer = self._openrouter()
-
-                elif provider == "groq":
-                    answer = self._groq()
-
-                elif provider == "mistral":
-                    answer = self._mistral()
-
-                elif provider == "sambanova":
-                    answer = self._sambanova()
-
-                elif provider == "gemini":
-                    answer = self._gemini()
-
-                elif provider == "cohere":
-                    answer = self._cohere()
-
-                elif provider == "huggingface":
-                    answer = self._huggingface()
-
-                elif provider == "cloudflare":
-                    answer = self._cloudflare()
-
-                else:
-                    continue
-
-                self.messages.append({
-                    "role": "assistant",
-                    "content": answer,
-                })
-
-                return answer
-
-            except Exception as error:
-                print(
-                    f"[LLM] {provider} falhou: {error}"
+            if not providers:
+                return (
+                    "Não há nenhum provedor de IA "
+                    "disponível no momento."
                 )
 
-        return (
-            "Todos os provedores disponíveis "
-            "falharam nesta sessão."
+            for provider in providers:
+
+                try:
+                    if provider == "openrouter":
+                        answer = self._openrouter()
+
+                    elif provider == "groq":
+                        answer = self._groq()
+
+                    elif provider == "mistral":
+                        answer = self._mistral()
+
+                    elif provider == "sambanova":
+                        answer = self._sambanova()
+
+                    elif provider == "gemini":
+                        answer = self._gemini()
+
+                    elif provider == "cohere":
+                        answer = self._cohere()
+
+                    elif provider == "huggingface":
+                        answer = self._huggingface()
+
+                    elif provider == "cloudflare":
+                        answer = self._cloudflare()
+
+                    else:
+                        continue
+
+                    self.messages.append({
+                        "role": "assistant",
+                        "content": answer,
+                    })
+
+                    return answer
+
+                except Exception as error:
+                    print(
+                        f"[LLM] {provider} falhou: {error}"
+                    )
+
+            return (
+                "Todos os provedores disponíveis "
+                "falharam nesta sessão."
+            )
+
+        finally:
+            if on_event:
+                on_event({"type": "TASK_FINISHED"})
+
+            self.tool_manager.event_callback = None
+
+    def chat_stream(self, message, on_delta):
+        """Base para streaming via OpenRouter (preparação, não usado por
+        padrão ainda).
+
+        Chama on_delta(texto_parcial) a cada pedaço recebido do modelo e
+        retorna a resposta completa ao final. Isso permite, no futuro, que
+        o Nix comece a falar enquanto o LLM ainda está gerando o resto da
+        resposta (ver seção "TTS assíncrono" do projeto).
+
+        LIMITAÇÃO CONHECIDA: esta versão inicial não processa tool_calls
+        em streaming (usa o fluxo normal, sem stream, quando o modelo
+        decide chamar uma ferramenta). Isso evita reescrever o LLM Gateway
+        inteiro só por causa do streaming, priorizando estabilidade. Uma
+        chamada com ferramentas continua funcionando normalmente pelo
+        chat() de sempre.
+        """
+
+        api_key = os.getenv("OPENROUTER_API_KEY")
+
+        if not api_key:
+            raise RuntimeError(
+                "OPENROUTER_API_KEY não configurada"
+            )
+
+        messages = [
+            self._system_message(),
+            *self.messages,
+            {"role": "user", "content": message},
+        ]
+
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": os.getenv(
+                    "OPENROUTER_MODEL",
+                    "openrouter/free",
+                ),
+                "messages": messages,
+                "stream": True,
+            },
+            timeout=60,
+            stream=True,
         )
+
+        response.raise_for_status()
+
+        full_text = []
+
+        for line in response.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue
+
+            payload = line[len("data: "):].strip()
+
+            if payload == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+            choices = chunk.get("choices") or []
+
+            if not choices:
+                continue
+
+            delta = choices[0].get("delta", {})
+            piece = delta.get("content")
+
+            if piece:
+                full_text.append(piece)
+                on_delta(piece)
+
+        return "".join(full_text)
 
     def _openrouter(self):
         api_key = os.getenv("OPENROUTER_API_KEY")
@@ -104,10 +224,7 @@ class LLMGateway:
             )
 
         messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
+            self._system_message(),
             *self.messages,
         ]
 
@@ -225,10 +342,7 @@ class LLMGateway:
             )
 
         messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
+            self._system_message(),
             *self.messages,
         ]
 
@@ -436,7 +550,7 @@ class LLMGateway:
                     config=(
                         types.GenerateContentConfig(
                             system_instruction=(
-                                SYSTEM_PROMPT
+                                self._system_message()["content"]
                             ),
                             tools=(
                                 self.tool_manager
@@ -548,10 +662,7 @@ class LLMGateway:
             json={
                 "model": model,
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT,
-                    },
+                    self._system_message(),
                     *self.messages,
                 ],
             },
@@ -657,10 +768,7 @@ class LLMGateway:
             },
             json={
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT,
-                    },
+                    self._system_message(),
                     *self.messages,
                 ]
             },

@@ -42,6 +42,13 @@ def print_providers(agent):
         )
 
 
+def print_progress(event):
+    """Mostra progresso real (nunca inventado) no modo texto."""
+
+    if event["type"] == "TOOL_STARTED":
+        print(f"… executando {event['tool']}")
+
+
 def text_mode():
     agent = Agent()
 
@@ -66,7 +73,10 @@ def text_mode():
             if not message:
                 continue
 
-            response = agent.process(message)
+            response = agent.process(
+                message,
+                on_event=print_progress,
+            )
 
             print_response(
                 agent,

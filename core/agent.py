@@ -13,8 +13,12 @@ class Agent:
             tool_manager=self.tool_manager
         )
 
-    def process(self, message):
-        return self.llm.chat(message)
+    def process(self, message, on_event=None, voice_mode=False):
+        return self.llm.chat(
+            message,
+            on_event=on_event,
+            voice_mode=voice_mode,
+        )
 
     def confirm_action(self, tool_name, arguments):
         print()

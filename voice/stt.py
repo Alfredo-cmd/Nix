@@ -56,8 +56,6 @@ def transcribe(audio_path: str) -> str:
                     "temperature": "0",
                     "prompt": (
                         "Português brasileiro. "
-                        "Nix, NixOS, Linux, Python, "
-                        "KDE Plasma, AMD Ryzen, Radeon."
                     )
                 },
                 timeout=60
